@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Kinect Skeleton Viewer</title>
+<style>
+    body {
+        background: #111;
+        color: white;
+        text-align: center;
+        font-family: Arial, sans-serif;
+    }
+    canvas {
+        background: #222;
+        border: 2px solid #555;
+        margin-top: 20px;
+    }
+</style>
+</head>
+<body>
+<h1>Kinect Skeleton Viewer</h1>
+<canvas id="skeletonCanvas" width="640" height="480"></canvas>
+
+<script>
+const WS_URL = "ws://localhost:8765"; // Cambia "localhost" por la IP de tu PC si es remoto
+const JOINT_CONNECTIONS = [
+    ["head", "neck"],
+    ["neck", "left_shoulder"], ["neck", "right_shoulder"],
+    ["left_shoulder", "left_elbow"], ["right_shoulder", "right_elbow"],
+    ["left_elbow", "left_hand"], ["right_elbow", "right_hand"],
+    ["left_shoulder", "torso"], ["right_shoulder", "torso"],
+    ["torso", "left_hip"], ["torso", "right_hip"],
+    ["left_hip", "left_knee"], ["right_hip", "right_knee"],
+    ["left_knee", "left_foot"], ["right_knee", "right_foot"]
+];
+
+let joints = {};
+const canvas = document.getElementById("skeletonCanvas");
+const ctx = canvas.getContext("2d");
+
+// Conectar al WebSocket
+let ws = new WebSocket(WS_URL);
+ws.onopen = () => console.log("Conectado a Kinect WebSocket");
+ws.onmessage = (event) => {
+    try {
+        let data = JSON.parse(event.data);
+        joints = data.joints || {};
+    } catch (e) {
+        console.error("Error parseando JSON:", e);
+    }
+};
+ws.onclose = () => console.log("Desconectado del servidor WebSocket");
+
+// Dibuja el esqueleto
+function drawSkeleton() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Dibujar conexiones
+    ctx.strokeStyle = "red";
+    ctx.lineWidth = 2;
+    JOINT_CONNECTIONS.forEach(([j1, j2]) => {
+        if (joints[j1] && joints[j2]) {
+            ctx.beginPath();
+            ctx.moveTo(joints[j1].x, joints[j1].y);
+            ctx.lineTo(joints[j2].x, joints[j2].y);
+            ctx.stroke();
+        }
+    });
+
+    // Dibujar puntos
+    ctx.fillStyle = "cyan";
+    for (let key in joints) {
+        let {x, y, z} = joints[key];
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillText(key, x + 8, y);
+    }
+
+    requestAnimationFrame(drawSkeleton);
+}
+
+drawSkeleton();
+</script>
+</body>
+</html>
