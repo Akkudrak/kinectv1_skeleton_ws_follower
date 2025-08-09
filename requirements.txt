@@ -1,0 +1,9 @@
+scikit-build
+opencv-python
+pywin32
+argparse
+numpy
+primesense
+openni
+websockets==6.0
+asyncio

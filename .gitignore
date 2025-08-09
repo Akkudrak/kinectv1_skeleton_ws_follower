@@ -1,0 +1,34 @@
+# Entorno virtual
+env/
+venv/
+ENV/
+.VENV/
+.venv/
+
+# Archivos de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Archivos de configuración de VSCode
+.vscode/
+
+# Archivos de configuración de NiTE
+NiTE2/
+
+# Archivos temporales
+*.log
+*.tmp
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Archivos de salida de OpenNI/NiTE
+*.oni
+
+# Archivos de configuración de entorno
+*.env
+
+# Archivos de usuario

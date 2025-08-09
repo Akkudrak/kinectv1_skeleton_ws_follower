@@ -1,0 +1,164 @@
+import cv2
+import numpy as np
+import win32api, win32con
+from openni import openni2, nite2
+import math
+import time
+
+# Inicializar OpenNI2 y NiTE2
+openni2.initialize("C:/Program Files/OpenNI2/Redist")
+nite2.initialize("C:/Program Files/PrimeSense/NiTE2/Redist")
+
+# Abrir Kinect
+dev = openni2.Device.open_any()
+color_stream = dev.create_color_stream()
+color_stream.start()
+
+# Tracker de usuarios/esqueleto
+user_tracker = nite2.UserTracker(dev)
+
+# Articulaciones
+JOINT_RIGHT_HAND = 7
+JOINT_RIGHT_ELBOW = 5
+
+SKELETON_TRACKED = 2
+
+# Tamaño ventana
+FRAME_W, FRAME_H = 640, 480
+
+# Recuadro central (mitad del tamaño)
+BOX_W, BOX_H = FRAME_W // 2, FRAME_H // 2
+BOX_X1 = (FRAME_W - BOX_W) // 2
+BOX_Y1 = (FRAME_H - BOX_H) // 2
+BOX_X2 = BOX_X1 + BOX_W
+BOX_Y2 = BOX_Y1 + BOX_H
+
+# Tamaño de pantalla Windows
+screen_w = win32api.GetSystemMetrics(0)
+screen_h = win32api.GetSystemMetrics(1)
+
+clicking = False # Estado del clic del mouse
+
+# Para suavizar movimiento
+smooth_joints = {}
+smooth_alpha = 0.2 # Factor de suavizado (0.0 a 1.0, 0.0 = sin suavizado, 1.0 = sin cambio)
+
+# Variables para detectar empujón y regreso
+push_threshold = 700  # mm, distancia z umbral para empujón
+max_duration = 0.2    # segundos máximo para el gesto completo, esto no es necesario, quiza borrarlo en el futuro
+
+push_detected = False
+push_start_time = 0
+
+scale = 0.9  # Escala del esqueleto dibujado en pantalla
+
+def move_mouse_from_box(x, y):
+    """Mapea coordenadas del recuadro a la pantalla completa"""
+    x = max(BOX_X1, min(x, BOX_X2))
+    y = max(BOX_Y1, min(y, BOX_Y2))
+    x_norm = (x - BOX_X1) / BOX_W
+    y_norm = (y - BOX_Y1) / BOX_H
+    win32api.SetCursorPos((int(x_norm * screen_w), int(y_norm * screen_h)))
+
+def click_mouse(down=True):
+    global clicking
+    if down and not clicking:
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0)
+        clicking = True
+    elif not down and clicking:
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0)
+        clicking = False
+
+def joint_to_pixel(joint):
+    px = int(FRAME_W / 2 + joint.position.x * scale / 2)
+    py = int(FRAME_H / 2 - joint.position.y * scale / 2)
+    return (px, py)
+
+def smooth_point(joint_id, new_point):
+    if joint_id not in smooth_joints:
+        smooth_joints[joint_id] = new_point
+    else:
+        old_x, old_y = smooth_joints[joint_id]
+        new_x = old_x + smooth_alpha * (new_point[0] - old_x)
+        new_y = old_y + smooth_alpha * (new_point[1] - old_y)
+        smooth_joints[joint_id] = (new_x, new_y)
+    return tuple(map(int, smooth_joints[joint_id]))
+
+print("Ella: Kinect v1 + OpenNI2 + NiTE2 con clic por empujón y regreso rápido.")
+
+try:
+    while True:
+        # Imagen RGB
+        color_frame = color_stream.read_frame()
+        color_data = np.frombuffer(color_frame.get_buffer_as_uint8(), dtype=np.uint8)
+        color_data = color_data.reshape((FRAME_H, FRAME_W, 3))
+        frame_bgr = cv2.cvtColor(color_data, cv2.COLOR_RGB2BGR)
+
+        # Dibujar recuadro central
+        cv2.rectangle(frame_bgr, (BOX_X1, BOX_Y1), (BOX_X2, BOX_Y2), (0, 255, 0), 2)
+
+        # Tracking usuario
+        user_frame = user_tracker.read_frame()
+        for user in user_frame.users:
+            if user.is_new():
+                user_tracker.start_skeleton_tracking(user.id)
+            elif user.skeleton.state == SKELETON_TRACKED:
+                joints = user.skeleton.joints
+
+                # Dibujar esqueleto
+                for j1, j2 in [
+                    (0, 1), (1, 2), (1, 3), (2, 4), (3, 5),
+                    (4, 6), (5, 7), (2, 8), (3, 8), (8, 9),
+                    (8, 10), (9, 11), (10, 12), (11, 13), (12, 14)
+                ]:
+                    if joints[j1].positionConfidence > 0.5 and joints[j2].positionConfidence > 0.5:
+                        p1 = smooth_point(j1, joint_to_pixel(joints[j1]))
+                        p2 = smooth_point(j2, joint_to_pixel(joints[j2]))
+                        cv2.line(frame_bgr, p1, p2, (0, 0, 255), 2)
+
+                # Control puntero
+                right_hand = joints[JOINT_RIGHT_HAND]
+                if right_hand.positionConfidence > 0.5:
+                    hand_px = smooth_point(JOINT_RIGHT_HAND, joint_to_pixel(right_hand))
+                    move_mouse_from_box(hand_px[0], hand_px[1])
+
+                    # Detectar empujón y regreso para click rápido
+                    z = right_hand.position.z
+                    current_time = time.time()
+
+                    if not push_detected:
+                        # Empujón: mano se acerca < umbral
+                        if z < push_threshold:
+                            push_detected = True
+                            push_start_time = current_time
+                    else:
+                        # Regreso: mano se aleja > umbral
+                        duration = current_time - push_start_time
+                        if z > push_threshold and duration <= max_duration:
+                            print(f"Click detectado en {duration*1000:.0f} ms")
+                            click_mouse(True)
+                            click_mouse(False)
+                            push_detected = False
+                        elif duration > max_duration:
+                            # Tiempo excedido, resetear
+                            push_detected = False
+
+                    cv2.putText(frame_bgr, f"Profundidad mano: {z:.0f} mm", (20, 40),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                    if push_detected:
+                        duration = current_time - push_start_time
+                        cv2.putText(frame_bgr, f"Esperando regreso... {duration:.2f}s", (20, 80),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+
+        cv2.imshow("Kinect v1 - Click empujón rápido", frame_bgr)
+        if cv2.waitKey(1) & 0xFF == 27:
+            break
+
+except KeyboardInterrupt:
+    pass
+
+color_stream.stop()
+nite2.shutdown()
+openni2.shutdown()
+cv2.destroyAllWindows()
